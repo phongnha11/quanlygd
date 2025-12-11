@@ -11,7 +11,7 @@ import string
 # 1. CẤU HÌNH GIAO DIỆN & KẾT NỐI GOOGLE SHEETS
 # ==============================================================================
 st.set_page_config(
-    page_title="THPT Phan Bội Châu - Quản Lý Giải Đấu",
+    page_title="THPT Phan Bội Châu - Phan Thiết - Quản Lý Giải Đấu",
     page_icon="🏆",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -146,7 +146,7 @@ def main():
 
     # --- 3.1 TỔNG QUAN ---
     if menu == "🏠 Tổng quan":
-        st.title("🏆 Hệ Thống Quản Lý Giải Đấu (Google Sheets)")
+        st.title("🏆 Hệ Thống Quản Lý Giải Đấu Thể Thao - Phan Bội Châu - Phan Thiết")
         
         df_mon = get_data('disciplines')
         df_dv = get_data('units')
@@ -276,3 +276,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
