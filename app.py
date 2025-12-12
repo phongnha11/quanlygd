@@ -27,9 +27,7 @@ st.markdown("""
     .stButton>button { width: 100%; border-radius: 6px; font-weight: 600; }
     .stMetric { background-color: white; padding: 15px; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     h1, h2, h3 { color: #1e3a8a; }
-    .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 0.8em; font-weight: bold; }
-    .badge-success { background-color: #d1fae5; color: #065f46; }
-    .badge-warning { background-color: #fef3c7; color: #92400e; }
+    .edit-form { background-color: #e0f2fe; padding: 20px; border-radius: 10px; border: 1px solid #3b82f6; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -51,9 +49,8 @@ def get_gsheet_client():
 
 client = get_gsheet_client()
 
-# --- HÀM KIỂM TRA VÀ CẬP NHẬT HEADER (QUAN TRỌNG) ---
+# --- HÀM KIỂM TRA VÀ CẬP NHẬT HEADER ---
 def sync_headers(ws, sheet_name):
-    """Tự động thêm cột thiếu vào Google Sheet nếu chưa có"""
     expected_headers = {
         'config': ['key', 'value'],
         'systems': ['id', 'name', 'createdAt'],
@@ -66,35 +63,24 @@ def sync_headers(ws, sheet_name):
     if sheet_name in expected_headers:
         try:
             current_headers = ws.row_values(1)
-            # Tìm các cột còn thiếu
             missing_cols = [h for h in expected_headers[sheet_name] if h not in current_headers]
-            
             if missing_cols:
-                # Thêm các cột thiếu vào dòng 1
                 start_col = len(current_headers) + 1
                 for i, header in enumerate(missing_cols):
                     ws.update_cell(1, start_col + i, header)
-                time.sleep(0.5) # Đợi xíu cho Google cập nhật
+                time.sleep(0.5)
         except Exception as e:
             print(f"Lỗi sync header: {e}")
 
 # --- HÀM XỬ LÝ DỮ LIỆU ---
 def get_worksheet(sheet_name):
     try:
-        # Thay ID file Google Sheet của bạn vào đây nếu cần kết nối chính xác
-        # SPREADSHEET_ID = "..." 
-        # sh = client.open_by_key(SPREADSHEET_ID)
-        
-        # Mở bằng tên (Đảm bảo đã Share quyền Editor cho email robot)
         SPREADSHEET_NAME = "QUAN_LY_GIAI_DAU_PBC" 
         sh = client.open(SPREADSHEET_NAME)
-
         try:
             worksheet = sh.worksheet(sheet_name)
-            # Kiểm tra và đồng bộ cột ngay khi mở sheet
             sync_headers(worksheet, sheet_name)
         except:
-            # Tự động tạo sheet nếu chưa có và thêm header chuẩn
             worksheet = sh.add_worksheet(title=sheet_name, rows=100, cols=20)
             headers = {
                 'config': ['key', 'value'],
@@ -108,17 +94,15 @@ def get_worksheet(sheet_name):
                 worksheet.append_row(headers[sheet_name])
         return worksheet
     except Exception as e:
-        st.error(f"⚠️ Không tìm thấy file Google Sheet '{SPREADSHEET_NAME}'. Hãy kiểm tra lại tên file hoặc quyền chia sẻ.")
+        st.error(f"⚠️ Không tìm thấy file Google Sheet '{SPREADSHEET_NAME}'.")
         st.stop()
 
 def ensure_columns(df, required_cols):
-    """Đảm bảo DataFrame luôn có đủ cột cần thiết để tránh KeyError"""
     if df.empty:
         return pd.DataFrame(columns=required_cols)
-    
     for col in required_cols:
         if col not in df.columns:
-            df[col] = "" # Điền giá trị rỗng nếu thiếu
+            df[col] = "" 
     return df
 
 def get_data(sheet_name):
@@ -126,12 +110,11 @@ def get_data(sheet_name):
         ws = get_worksheet(sheet_name)
         data = ws.get_all_records()
         df = pd.DataFrame(data)
-        
-        # VÁ LỖI THIẾU CỘT TRIỆT ĐỂ
         if sheet_name == 'registrations':
             required = ['id', 'unitId', 'unitName', 'athleteName', 'gender', 'dob', 'cccd', 'studentId', 'systemName', 'ageGroup', 'registered_contents', 'rank', 'createdAt']
             df = ensure_columns(df, required)
-        
+        elif sheet_name == 'units':
+            df = ensure_columns(df, ['id', 'name', 'manager', 'registrationCode', 'createdAt'])
         return df
     except:
         return pd.DataFrame()
@@ -144,38 +127,37 @@ def save_data(sheet_name, row_dict):
         if 'createdAt' not in row_dict:
             row_dict['createdAt'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Lấy header thực tế (sau khi đã sync)
         headers = ws.row_values(1)
-        
-        # Map dữ liệu vào đúng cột
-        row_to_add = []
-        for h in headers:
-            # Chuyển tất cả về string để tránh lỗi serialize
-            val = row_dict.get(h, "")
-            row_to_add.append(str(val))
-            
+        row_to_add = [str(row_dict.get(h, "")) for h in headers]
         ws.append_row(row_to_add)
         return True
     except Exception as e:
         st.error(f"Lỗi lưu: {e}")
         return False
 
-def update_cell(sheet_name, doc_id, col_name, new_value):
+def update_row_data(sheet_name, doc_id, updated_data):
+    """Cập nhật toàn bộ dòng dữ liệu dựa trên ID"""
     try:
         ws = get_worksheet(sheet_name)
         cell = ws.find(str(doc_id))
-        if cell:
-            headers = ws.row_values(1)
-            try:
-                col_idx = headers.index(col_name) + 1
-                ws.update_cell(cell.row, col_idx, str(new_value))
-                return True
-            except:
-                st.error(f"Không tìm thấy cột {col_name}")
-        return False
+        if not cell:
+            return False
+        
+        headers = ws.row_values(1)
+        row_idx = cell.row
+        
+        # Duyệt qua từng field cần update
+        for key, value in updated_data.items():
+            if key in headers:
+                col_idx = headers.index(key) + 1
+                ws.update_cell(row_idx, col_idx, str(value))
+        return True
     except Exception as e:
-        st.error(f"Lỗi cập nhật: {e}")
+        st.error(f"Lỗi update: {e}")
         return False
+
+def update_cell(sheet_name, doc_id, col_name, new_value):
+    return update_row_data(sheet_name, doc_id, {col_name: new_value})
 
 def delete_data(sheet_name, id_to_delete):
     try:
@@ -192,7 +174,7 @@ def delete_data(sheet_name, id_to_delete):
 def get_config(key):
     df = get_data('config')
     if not df.empty:
-        df = ensure_columns(df, ['key', 'value']) # Đảm bảo có cột key, value
+        df = ensure_columns(df, ['key', 'value'])
         row = df[df['key'] == key]
         if not row.empty:
             return row.iloc[0]['value']
@@ -222,12 +204,15 @@ def main():
         st.session_state.role = 'guest'
     if 'user_info' not in st.session_state:
         st.session_state.user_info = None
+    
+    # State quản lý việc sửa VĐV
+    if 'editing_athlete' not in st.session_state:
+        st.session_state.editing_athlete = None
 
     # --- SIDEBAR ---
     with st.sidebar:
         st.title("🏅 Điều Khiển Giải Đấu")
         
-        # ĐĂNG NHẬP
         if st.session_state.role == 'guest':
             with st.expander("🔐 Đăng nhập", expanded=True):
                 mode = st.radio("Vai trò:", ["Đơn vị (Lớp)", "Admin"])
@@ -260,11 +245,11 @@ def main():
             if st.button("Đăng xuất"):
                 st.session_state.role = 'guest'
                 st.session_state.user_info = None
+                st.session_state.editing_athlete = None
                 st.rerun()
         
         st.markdown("---")
         
-        # MENU
         if st.session_state.role == 'admin':
             menu = st.radio("Chức năng:", ["🏠 Tổng quan", "⚙️ Cấu hình Giải đấu", "🏅 Môn & Nội dung thi", "🏢 Quản lý Đơn vị", "🏆 Cập nhật Kết quả"])
         elif st.session_state.role == 'unit':
@@ -272,15 +257,13 @@ def main():
         else:
             menu = "🏠 Tổng quan"
 
-    # --- LOGIC CÁC TRANG ---
+    # --- ROUTING ---
     
     # 1. TỔNG QUAN
     if menu == "🏠 Tổng quan":
         st.title("🏆 Thông Tin Giải Đấu")
-        
         deadline_str = get_config('deadline')
         tournament_name = get_config('tournament_name') or "Giải Thể Thao Học Đường"
-        
         st.header(tournament_name)
         if deadline_str:
             try:
@@ -290,8 +273,7 @@ def main():
                     st.info(f"📅 Hạn đăng ký: **{deadline_str}** (Còn {days_left} ngày)")
                 else:
                     st.error(f"🔴 Đã hết hạn đăng ký từ ngày {deadline_str}")
-            except:
-                pass
+            except: pass
         
         df_reg = get_data('registrations')
         c1, c2, c3 = st.columns(3)
@@ -303,33 +285,26 @@ def main():
             st.subheader("Bảng vàng thành tích")
             winners = df_reg[df_reg['rank'].isin(['Nhất', 'Nhì', 'Ba'])]
             if not winners.empty:
-                cols_to_show = ['athleteName', 'unitName', 'rank']
-                if 'registered_contents' in winners.columns:
-                    cols_to_show.insert(2, 'registered_contents')
-                st.dataframe(winners[cols_to_show], use_container_width=True)
+                cols = ['athleteName', 'unitName', 'rank']
+                if 'registered_contents' in winners.columns: cols.insert(2, 'registered_contents')
+                st.dataframe(winners[cols], use_container_width=True)
 
     # 2. CẤU HÌNH (ADMIN)
     elif menu == "⚙️ Cấu hình Giải đấu":
         st.header("⚙️ Thiết lập Chung")
-        
         with st.form("config_form"):
             t_name = st.text_input("Tên giải đấu", value=get_config('tournament_name') or "")
             deadline = st.date_input("Hạn chót đăng ký", value=datetime.today())
-            
             st.subheader("Hệ thống tổ chức (Hệ thi đấu)")
             new_sys = st.text_input("Thêm Hệ thi đấu mới (Nhập tên):")
-            
-            submit = st.form_submit_button("Lưu Cấu hình")
-            
-            if submit:
+            if st.form_submit_button("Lưu Cấu hình"):
                 set_config('tournament_name', t_name)
                 set_config('deadline', str(deadline))
-                if new_sys:
-                    save_data('systems', {'name': new_sys})
-                st.success("Đã lưu cấu hình!")
+                if new_sys: save_data('systems', {'name': new_sys})
+                st.success("Đã lưu!")
                 st.cache_data.clear()
                 st.rerun()
-
+        
         st.divider()
         st.subheader("Danh sách Hệ thi đấu")
         df_sys = get_data('systems')
@@ -337,22 +312,20 @@ def main():
             for i, row in df_sys.iterrows():
                 c1, c2 = st.columns([4, 1])
                 c1.write(f"• {row['name']}")
-                if c2.button("Xóa", key=f"del_sys_{row['id']}"):
+                if c2.button("Xóa", key=f"ds_{row['id']}"):
                     delete_data('systems', row['id'])
                     st.rerun()
 
     # 3. MÔN & NỘI DUNG (ADMIN)
     elif menu == "🏅 Môn & Nội dung thi":
         st.header("🏅 Quản lý Môn & Nội dung")
-        
         c1, c2 = st.columns([1, 2])
-        
         with c1: 
             st.subheader("1. Thêm Môn thi")
             with st.form("add_disc"):
                 d_code = st.text_input("Mã môn (VD: BD)").upper()
                 d_name = st.text_input("Tên môn (VD: Bóng đá)")
-                d_exempt = st.checkbox("Môn này KHÔNG giới hạn số lượng ĐK?")
+                d_exempt = st.checkbox("Không giới hạn số lượng ĐK?")
                 if st.form_submit_button("Thêm Môn"):
                     if d_code and d_name:
                         save_data('disciplines', {'code': d_code, 'name': d_name, 'is_exempt': 'True' if d_exempt else 'False'})
@@ -363,46 +336,38 @@ def main():
         with c2: 
             st.subheader("2. Thêm Nội dung thi đấu")
             df_disc = get_data('disciplines')
-            
             if not df_disc.empty:
                 selected_disc_name = st.selectbox("Chọn Môn thi đấu:", df_disc['name'].tolist())
                 selected_disc = df_disc[df_disc['name'] == selected_disc_name].iloc[0]
-                
                 with st.form("add_content"):
-                    c_name = st.text_input(f"Tên nội dung thuộc môn {selected_disc_name} (VD: Hạng cân < 50kg)")
+                    c_name = st.text_input(f"Tên nội dung thuộc môn {selected_disc_name}")
                     c_gender = st.selectbox("Dành cho:", ["Nam", "Nữ", "Nam & Nữ"])
                     if st.form_submit_button("Thêm Nội dung"):
                         if c_name:
-                            save_data('contents', {
-                                'discipline_id': selected_disc['id'],
-                                'name': c_name,
-                                'gender': c_gender
-                            })
-                            st.success("Đã thêm nội dung!")
+                            save_data('contents', {'discipline_id': selected_disc['id'], 'name': c_name, 'gender': c_gender})
+                            st.success("Đã thêm!")
                             st.cache_data.clear()
                             st.rerun()
-                
-                st.write(f"**Danh sách nội dung của {selected_disc_name}:**")
+                st.write(f"**Nội dung của {selected_disc_name}:**")
                 df_contents = get_data('contents')
                 if not df_contents.empty:
                     df_contents['discipline_id'] = df_contents['discipline_id'].astype(str)
                     my_contents = df_contents[df_contents['discipline_id'] == str(selected_disc['id'])]
-                    
                     if not my_contents.empty:
                         for _, row in my_contents.iterrows():
                             cc1, cc2 = st.columns([4, 1])
                             cc1.text(f"- {row['name']} ({row['gender']})")
-                            if cc2.button("Xóa", key=f"del_c_{row['id']}"):
+                            if cc2.button("Xóa", key=f"dc_{row['id']}"):
                                 delete_data('contents', row['id'])
                                 st.rerun()
-                    else:
-                        st.caption("Chưa có nội dung nào.")
-            else:
-                st.warning("Vui lòng tạo môn thi đấu trước.")
+                    else: st.caption("Chưa có nội dung.")
+            else: st.warning("Vui lòng tạo môn trước.")
 
     # 4. QUẢN LÝ ĐƠN VỊ (ADMIN)
     elif menu == "🏢 Quản lý Đơn vị":
-        st.header("🏢 Danh sách Đơn vị")
+        st.header("🏢 Quản lý Đơn vị")
+        
+        # Form Thêm Đơn vị
         with st.expander("➕ Cấp tài khoản mới", expanded=False):
             u_name = st.text_input("Tên Đơn vị/Lớp")
             u_man = st.text_input("Người phụ trách")
@@ -414,49 +379,76 @@ def main():
                     st.cache_data.clear()
                     st.rerun()
         
+        st.divider()
+        st.subheader("Danh sách & Thao tác")
         df = get_data('units')
+        
         if not df.empty:
+            # Chọn đơn vị để Sửa/Xóa
+            unit_names = df['name'].tolist()
+            selected_unit_name = st.selectbox("Chọn đơn vị để sửa/xóa:", ["-- Chọn --"] + unit_names)
+            
+            if selected_unit_name != "-- Chọn --":
+                selected_unit = df[df['name'] == selected_unit_name].iloc[0]
+                
+                with st.container(border=True):
+                    st.markdown(f"**Đang thao tác: {selected_unit['name']}** (Mã: `{selected_unit['registrationCode']}`)")
+                    
+                    c1, c2 = st.columns(2)
+                    new_u_name = c1.text_input("Tên Đơn vị", value=selected_unit['name'])
+                    new_u_man = c2.text_input("Người phụ trách", value=selected_unit['manager'])
+                    
+                    col_save, col_del = st.columns([1, 1])
+                    
+                    if col_save.button("Lưu thay đổi", type="primary"):
+                        if update_row_data('units', selected_unit['id'], {'name': new_u_name, 'manager': new_u_man}):
+                            st.success("Đã cập nhật!")
+                            st.cache_data.clear()
+                            time.sleep(1)
+                            st.rerun()
+                    
+                    if col_del.button("🗑️ Xóa Đơn vị này"):
+                        if delete_data('units', selected_unit['id']):
+                            st.warning("Đã xóa đơn vị.")
+                            st.cache_data.clear()
+                            time.sleep(1)
+                            st.rerun()
+            
+            # Hiển thị bảng tổng quan
             st.dataframe(df[['name', 'manager', 'registrationCode']], use_container_width=True)
+        else:
+            st.info("Chưa có đơn vị nào.")
 
     # 5. CẬP NHẬT KẾT QUẢ (ADMIN)
     elif menu == "🏆 Cập nhật Kết quả":
         st.header("🏆 Cập nhật Thành tích")
-        
         df_reg = get_data('registrations')
         if df_reg.empty:
-            st.info("Chưa có dữ liệu đăng ký.")
+            st.info("Chưa có dữ liệu.")
         else:
             col_search, col_rank = st.columns(2)
             search_txt = col_search.text_input("Tìm tên VĐV/Đơn vị:")
-            
             view_df = df_reg.copy()
             if search_txt:
                 view_df = view_df[view_df.astype(str).apply(lambda x: x.str.contains(search_txt, case=False)).any(axis=1)]
             
             st.write("---")
-            st.subheader("Cập nhật giải thưởng")
-            
             athlete_opts = []
             for idx, row in view_df.iterrows():
-                # Dùng .get() để tránh lỗi nếu thiếu cột
                 cont = row.get('registered_contents', 'N/A')
                 name = row.get('athleteName', 'Unknown')
                 unit = row.get('unitName', 'Unknown')
                 athlete_opts.append(f"{name} ({unit}) - {cont}")
 
-            selected_str = st.selectbox("Chọn VĐV để cập nhật:", athlete_opts)
-            
+            selected_str = st.selectbox("Chọn VĐV:", athlete_opts)
             if selected_str:
                 selected_idx = athlete_opts.index(selected_str)
                 selected_id = view_df.iloc[selected_idx]['id']
-                
                 new_rank = st.selectbox("Thành tích:", ["", "Nhất", "Nhì", "Ba", "Khuyến Khích", "Hoàn thành"])
-                
                 if st.button("Lưu Kết quả"):
                     if update_cell('registrations', selected_id, 'rank', new_rank):
-                        st.success(f"Đã cập nhật thành tích cho {selected_str}")
+                        st.success("Đã cập nhật!")
                         st.cache_data.clear()
-                        time.sleep(1)
                         st.rerun()
 
     # 6. ĐĂNG KÝ THI ĐẤU (UNIT)
@@ -464,66 +456,110 @@ def main():
         unit = st.session_state.user_info
         st.header(f"📝 Đăng ký: {unit['name']}")
         
-        deadline_str = get_config('deadline')
-        if deadline_str:
-            try:
-                deadline_date = datetime.strptime(deadline_str, "%Y-%m-%d").date()
-                if date.today() > deadline_date:
-                    st.error(f"⛔ Đã hết hạn đăng ký ({deadline_str}). Bạn chỉ có thể xem danh sách.")
-                    st.stop()
-            except:
-                pass
+        # Xử lý Logic Sửa/Thêm mới
+        edit_data = st.session_state.editing_athlete
+        is_editing = edit_data is not None
         
+        form_title = "✏️ Cập nhật thông tin VĐV" if is_editing else "➕ Đăng ký VĐV Mới"
+        
+        # Load dữ liệu cần thiết
+        df_sys = get_data('systems')
+        sys_opts = df_sys['name'].tolist() if not df_sys.empty else ["Mặc định"]
+        df_disc = get_data('disciplines')
+        df_cont = get_data('contents')
+
+        # Hiển thị form
+        if is_editing:
+            st.markdown(f'<div class="edit-form">Đang chỉnh sửa VĐV: <b>{edit_data.get("athleteName")}</b></div>', unsafe_allow_html=True)
+
         with st.form("reg_form_v2"):
-            st.subheader("Thông tin Vận động viên")
+            st.subheader(form_title)
+            
+            # Giá trị mặc định (Nếu đang sửa thì lấy từ edit_data, nếu không thì để trống)
+            def_name = edit_data.get('athleteName', '') if is_editing else ''
+            def_gender_idx = 0 if is_editing and edit_data.get('gender') == 'Nam' else 1 if is_editing and edit_data.get('gender') == 'Nữ' else 0
+            
+            try:
+                def_dob = datetime.strptime(edit_data.get('dob', '2008-01-01'), '%Y-%m-%d').date() if is_editing else date(2008, 1, 1)
+            except: def_dob = date(2008, 1, 1)
+            
+            def_cccd = edit_data.get('cccd', '') if is_editing else ''
+            def_sid = edit_data.get('studentId', '') if is_editing else ''
+            def_age = edit_data.get('ageGroup', 'Tự do') if is_editing else 'Tự do'
+            
+            # Hệ thi đấu index
+            def_sys_idx = 0
+            if is_editing and edit_data.get('systemName') in sys_opts:
+                def_sys_idx = sys_opts.index(edit_data.get('systemName'))
+
             c1, c2, c3, c4 = st.columns(4)
-            a_name = c1.text_input("Họ tên (*)")
-            a_gender = c2.selectbox("Giới tính", ["Nam", "Nữ"])
-            a_dob = c3.date_input("Ngày sinh", value=date(2008, 1, 1), min_value=date(1990, 1, 1))
-            a_cccd = c4.text_input("Số CCCD")
+            a_name = c1.text_input("Họ tên (*)", value=def_name)
+            a_gender = c2.selectbox("Giới tính", ["Nam", "Nữ"], index=def_gender_idx)
+            a_dob = c3.date_input("Ngày sinh", value=def_dob, min_value=date(1990, 1, 1))
+            a_cccd = c4.text_input("Số CCCD", value=def_cccd)
             
             c5, c6, c7 = st.columns(3)
-            a_sid = c5.text_input("Mã học sinh/CCVC")
-            a_age_group = c6.text_input("Lứa tuổi (VD: 16-18)", value="Tự do")
-            
-            df_sys = get_data('systems')
-            sys_opts = df_sys['name'].tolist() if not df_sys.empty else ["Mặc định"]
-            a_system = c7.selectbox("Hệ thi đấu", sys_opts)
+            a_sid = c5.text_input("Mã học sinh/CCVC", value=def_sid)
+            a_age_group = c6.text_input("Lứa tuổi", value=def_age)
+            a_system = c7.selectbox("Hệ thi đấu", sys_opts, index=def_sys_idx)
             
             st.divider()
             st.subheader("Nội dung Thi đấu")
             
-            df_disc = get_data('disciplines')
-            df_cont = get_data('contents')
-            
             selected_contents_text = []
             
+            # Lấy danh sách nội dung cũ của VĐV (để tick sẵn)
+            current_contents = []
+            if is_editing and edit_data.get('registered_contents'):
+                current_contents = edit_data.get('registered_contents').split('; ')
+
             if not df_disc.empty:
                 for _, disc in df_disc.iterrows():
-                    with st.expander(f"🏅 Môn {disc['name']}", expanded=False):
+                    with st.expander(f"🏅 Môn {disc['name']}", expanded=is_editing):
                         if not df_cont.empty:
                             df_cont['discipline_id'] = df_cont['discipline_id'].astype(str)
                             sub_contents = df_cont[df_cont['discipline_id'] == str(disc['id'])]
                             
                             if not sub_contents.empty:
+                                available_opts = sub_contents['name'].tolist()
+                                # Tính toán default options cho multiselect
+                                defaults = []
+                                if is_editing:
+                                    for opt in available_opts:
+                                        if f"{disc['name']}: {opt}" in current_contents:
+                                            defaults.append(opt)
+                                
                                 conts = st.multiselect(
                                     f"Chọn nội dung {disc['name']}:", 
-                                    sub_contents['name'].tolist(),
+                                    available_opts,
+                                    default=defaults,
                                     key=f"m_sel_{disc['id']}"
                                 )
                                 if conts:
-                                    for c in conts:
-                                        selected_contents_text.append(f"{disc['name']}: {c}")
+                                    for c in conts: selected_contents_text.append(f"{disc['name']}: {c}")
                             else:
                                 st.caption("Chưa có nội dung cụ thể.")
-                                if st.checkbox(f"Đăng ký {disc['name']} (Chung)", key=f"chk_{disc['id']}"):
+                                # Checkbox fallback
+                                is_checked = False
+                                if is_editing and f"{disc['name']} (Chung)" in current_contents:
+                                    is_checked = True
+                                    
+                                if st.checkbox(f"Đăng ký {disc['name']} (Chung)", key=f"chk_{disc['id']}", value=is_checked):
                                     selected_contents_text.append(f"{disc['name']} (Chung)")
             
             st.info(f"Đang chọn: {', '.join(selected_contents_text)}")
             
-            submit = st.form_submit_button("Lưu Đăng Ký", type="primary")
+            submit_label = "Cập nhật VĐV" if is_editing else "Lưu Đăng Ký"
+            c_sub, c_cancel = st.columns([1, 1])
             
-            if submit:
+            submitted = c_sub.form_submit_button(submit_label, type="primary")
+            if is_editing:
+                cancelled = c_cancel.form_submit_button("Hủy bỏ")
+                if cancelled:
+                    st.session_state.editing_athlete = None
+                    st.rerun()
+
+            if submitted:
                 if a_name and selected_contents_text:
                     payload = {
                         'unitId': unit['id'],
@@ -537,11 +573,22 @@ def main():
                         'ageGroup': a_age_group,
                         'registered_contents': "; ".join(selected_contents_text)
                     }
-                    save_data('registrations', payload)
-                    st.success("Đăng ký thành công!")
-                    st.cache_data.clear()
-                    time.sleep(1)
-                    st.rerun()
+                    
+                    if is_editing:
+                        # Cập nhật
+                        if update_row_data('registrations', edit_data['id'], payload):
+                            st.success("Đã cập nhật thành công!")
+                            st.session_state.editing_athlete = None
+                            st.cache_data.clear()
+                            time.sleep(1)
+                            st.rerun()
+                    else:
+                        # Thêm mới
+                        save_data('registrations', payload)
+                        st.success("Đăng ký thành công!")
+                        st.cache_data.clear()
+                        time.sleep(1)
+                        st.rerun()
                 else:
                     st.warning("Thiếu tên hoặc chưa chọn nội dung thi đấu.")
 
@@ -554,59 +601,46 @@ def main():
             
             if not my_regs.empty:
                 for idx, row in my_regs.iterrows():
-                    with st.container():
+                    with st.container(border=True):
                         c1, c2, c3 = st.columns([3, 2, 1])
-                        # Sử dụng .get() để tránh lỗi Key Error nếu thiếu cột trong data cũ
                         s_name = row.get('athleteName', 'N/A')
                         s_gender = row.get('gender', '')
-                        s_dob = row.get('dob', '')
-                        s_sid = row.get('studentId', '')
-                        s_cccd = row.get('cccd', '')
                         s_cont = row.get('registered_contents', '')
-                        s_sys = row.get('systemName', '')
 
-                        c1.markdown(f"**{s_name}** - {s_gender} ({s_dob})")
-                        c1.caption(f"ID: {s_sid} | CCCD: {s_cccd}")
+                        c1.markdown(f"**{s_name}** ({s_gender})")
+                        c1.caption(f"ID: {row.get('studentId','')} - {row.get('dob','')}")
                         c2.write(f"🎯 {s_cont}")
-                        c2.caption(f"Hệ: {s_sys}")
                         
-                        if c3.button("Xóa", key=f"del_reg_{row['id']}"):
-                            delete_data('registrations', row['id'])
+                        col_edit, col_del = c3.columns(2)
+                        
+                        # Nút SỬA
+                        if col_edit.button("✏️", key=f"ed_{row['id']}", help="Sửa thông tin VĐV này"):
+                            st.session_state.editing_athlete = row.to_dict()
                             st.rerun()
-                        st.divider()
+                            
+                        # Nút XÓA
+                        if col_del.button("🗑️", key=f"del_{row['id']}", help="Xóa VĐV này"):
+                            delete_data('registrations', row['id'])
+                            # Nếu đang sửa chính người bị xóa thì reset form
+                            if st.session_state.editing_athlete and st.session_state.editing_athlete['id'] == row['id']:
+                                st.session_state.editing_athlete = None
+                            st.rerun()
 
     # 7. XUẤT DANH SÁCH (UNIT)
     elif menu == "📊 Xuất danh sách":
         unit = st.session_state.user_info
         st.title("📊 Xuất dữ liệu")
-        
         df_reg = get_data('registrations')
         if not df_reg.empty:
             df_reg['unitId'] = df_reg['unitId'].astype(str)
             my_regs = df_reg[df_reg['unitId'] == str(unit['id'])]
-            
             if not my_regs.empty:
-                # Đảm bảo hiển thị đủ cột và đúng thứ tự
-                cols_order = [
-                    'athleteName', 'gender', 'dob', 
-                    'studentId', 'cccd', 'systemName', 'ageGroup', 
-                    'registered_contents', 'rank'
-                ]
-                # Chỉ lấy những cột có trong dữ liệu
+                cols_order = ['athleteName', 'gender', 'dob', 'studentId', 'cccd', 'systemName', 'ageGroup', 'registered_contents', 'rank']
                 final_cols = [c for c in cols_order if c in my_regs.columns]
-                
                 st.dataframe(my_regs[final_cols], use_container_width=True)
-                
                 csv = my_regs[final_cols].to_csv(index=False).encode('utf-8-sig')
-                
-                st.download_button(
-                    label="📥 Tải danh sách (CSV)",
-                    data=csv,
-                    file_name=f"danh_sach_thi_dau_{unit['name']}.csv",
-                    mime="text/csv",
-                )
-            else:
-                st.info("Chưa có dữ liệu để xuất.")
+                st.download_button(label="📥 Tải CSV", data=csv, file_name=f"ds_{unit['name']}.csv", mime="text/csv")
+            else: st.info("Chưa có dữ liệu.")
 
 if __name__ == "__main__":
     main()
