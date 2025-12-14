@@ -136,7 +136,6 @@ def save_data(sheet_name, row_dict):
         return False
 
 def update_row_data(sheet_name, doc_id, updated_data):
-    """Cập nhật toàn bộ dòng dữ liệu dựa trên ID"""
     try:
         ws = get_worksheet(sheet_name)
         cell = ws.find(str(doc_id))
@@ -146,7 +145,6 @@ def update_row_data(sheet_name, doc_id, updated_data):
         headers = ws.row_values(1)
         row_idx = cell.row
         
-        # Duyệt qua từng field cần update
         for key, value in updated_data.items():
             if key in headers:
                 col_idx = headers.index(key) + 1
@@ -205,7 +203,6 @@ def main():
     if 'user_info' not in st.session_state:
         st.session_state.user_info = None
     
-    # State quản lý việc sửa VĐV
     if 'editing_athlete' not in st.session_state:
         st.session_state.editing_athlete = None
 
@@ -242,7 +239,10 @@ def main():
         else:
             role_name = "ADMIN" if st.session_state.role == 'admin' else st.session_state.user_info['name']
             st.success(f"Xin chào: **{role_name}**")
-            if st.button("Đăng xuất"):
+            
+            # --- FIX LỖI DUPLICATE ELEMENT ID ---
+            # Quan trọng: Thêm key="logout_btn" để tránh lỗi khi render lại
+            if st.button("Đăng xuất", key="logout_btn"):
                 st.session_state.role = 'guest'
                 st.session_state.user_info = None
                 st.session_state.editing_athlete = None
@@ -367,7 +367,6 @@ def main():
     elif menu == "🏢 Quản lý Đơn vị":
         st.header("🏢 Quản lý Đơn vị")
         
-        # Form Thêm Đơn vị
         with st.expander("➕ Cấp tài khoản mới", expanded=False):
             u_name = st.text_input("Tên Đơn vị/Lớp")
             u_man = st.text_input("Người phụ trách")
@@ -384,7 +383,6 @@ def main():
         df = get_data('units')
         
         if not df.empty:
-            # Chọn đơn vị để Sửa/Xóa
             unit_names = df['name'].tolist()
             selected_unit_name = st.selectbox("Chọn đơn vị để sửa/xóa:", ["-- Chọn --"] + unit_names)
             
@@ -400,21 +398,21 @@ def main():
                     
                     col_save, col_del = st.columns([1, 1])
                     
-                    if col_save.button("Lưu thay đổi", type="primary"):
+                    # Thêm key để tránh lỗi DuplicateElementId
+                    if col_save.button("Lưu thay đổi", type="primary", key="save_unit_btn"):
                         if update_row_data('units', selected_unit['id'], {'name': new_u_name, 'manager': new_u_man}):
                             st.success("Đã cập nhật!")
                             st.cache_data.clear()
                             time.sleep(1)
                             st.rerun()
                     
-                    if col_del.button("🗑️ Xóa Đơn vị này"):
+                    if col_del.button("🗑️ Xóa Đơn vị này", key="del_unit_btn"):
                         if delete_data('units', selected_unit['id']):
                             st.warning("Đã xóa đơn vị.")
                             st.cache_data.clear()
                             time.sleep(1)
                             st.rerun()
             
-            # Hiển thị bảng tổng quan
             st.dataframe(df[['name', 'manager', 'registrationCode']], use_container_width=True)
         else:
             st.info("Chưa có đơn vị nào.")
@@ -456,26 +454,22 @@ def main():
         unit = st.session_state.user_info
         st.header(f"📝 Đăng ký: {unit['name']}")
         
-        # Xử lý Logic Sửa/Thêm mới
         edit_data = st.session_state.editing_athlete
         is_editing = edit_data is not None
         
         form_title = "✏️ Cập nhật thông tin VĐV" if is_editing else "➕ Đăng ký VĐV Mới"
         
-        # Load dữ liệu cần thiết
         df_sys = get_data('systems')
         sys_opts = df_sys['name'].tolist() if not df_sys.empty else ["Mặc định"]
         df_disc = get_data('disciplines')
         df_cont = get_data('contents')
 
-        # Hiển thị form
         if is_editing:
             st.markdown(f'<div class="edit-form">Đang chỉnh sửa VĐV: <b>{edit_data.get("athleteName")}</b></div>', unsafe_allow_html=True)
 
         with st.form("reg_form_v2"):
             st.subheader(form_title)
             
-            # Giá trị mặc định (Nếu đang sửa thì lấy từ edit_data, nếu không thì để trống)
             def_name = edit_data.get('athleteName', '') if is_editing else ''
             def_gender_idx = 0 if is_editing and edit_data.get('gender') == 'Nam' else 1 if is_editing and edit_data.get('gender') == 'Nữ' else 0
             
@@ -487,7 +481,6 @@ def main():
             def_sid = edit_data.get('studentId', '') if is_editing else ''
             def_age = edit_data.get('ageGroup', 'Tự do') if is_editing else 'Tự do'
             
-            # Hệ thi đấu index
             def_sys_idx = 0
             if is_editing and edit_data.get('systemName') in sys_opts:
                 def_sys_idx = sys_opts.index(edit_data.get('systemName'))
@@ -508,7 +501,6 @@ def main():
             
             selected_contents_text = []
             
-            # Lấy danh sách nội dung cũ của VĐV (để tick sẵn)
             current_contents = []
             if is_editing and edit_data.get('registered_contents'):
                 current_contents = edit_data.get('registered_contents').split('; ')
@@ -522,7 +514,6 @@ def main():
                             
                             if not sub_contents.empty:
                                 available_opts = sub_contents['name'].tolist()
-                                # Tính toán default options cho multiselect
                                 defaults = []
                                 if is_editing:
                                     for opt in available_opts:
@@ -539,7 +530,6 @@ def main():
                                     for c in conts: selected_contents_text.append(f"{disc['name']}: {c}")
                             else:
                                 st.caption("Chưa có nội dung cụ thể.")
-                                # Checkbox fallback
                                 is_checked = False
                                 if is_editing and f"{disc['name']} (Chung)" in current_contents:
                                     is_checked = True
@@ -575,7 +565,6 @@ def main():
                     }
                     
                     if is_editing:
-                        # Cập nhật
                         if update_row_data('registrations', edit_data['id'], payload):
                             st.success("Đã cập nhật thành công!")
                             st.session_state.editing_athlete = None
@@ -583,7 +572,6 @@ def main():
                             time.sleep(1)
                             st.rerun()
                     else:
-                        # Thêm mới
                         save_data('registrations', payload)
                         st.success("Đăng ký thành công!")
                         st.cache_data.clear()
@@ -592,7 +580,6 @@ def main():
                 else:
                     st.warning("Thiếu tên hoặc chưa chọn nội dung thi đấu.")
 
-        # Xem danh sách
         st.subheader("Danh sách đã đăng ký")
         df_reg = get_data('registrations')
         if not df_reg.empty:
@@ -613,15 +600,12 @@ def main():
                         
                         col_edit, col_del = c3.columns(2)
                         
-                        # Nút SỬA
                         if col_edit.button("✏️", key=f"ed_{row['id']}", help="Sửa thông tin VĐV này"):
                             st.session_state.editing_athlete = row.to_dict()
                             st.rerun()
                             
-                        # Nút XÓA
                         if col_del.button("🗑️", key=f"del_{row['id']}", help="Xóa VĐV này"):
                             delete_data('registrations', row['id'])
-                            # Nếu đang sửa chính người bị xóa thì reset form
                             if st.session_state.editing_athlete and st.session_state.editing_athlete['id'] == row['id']:
                                 st.session_state.editing_athlete = None
                             st.rerun()
